@@ -1,15 +1,20 @@
 import * as core from '@actions/core';
+import { context } from '@actions/github';
 import { checkChangelog } from './check-changelog';
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   try {
     core.info('Starting empty changelog check action...');
 
-    const baseSha = process.env.GITHUB_BASE_REF || '';
-    const headSha = process.env.GITHUB_HEAD_REF || '';
+    const baseSha = context.payload.pull_request?.base.sha || '';
+    const headSha = context.payload.pull_request?.head.sha || '';
 
     core.info(`Base SHA: ${baseSha}`);
     core.info(`Head SHA: ${headSha}`);
+
+    if (!baseSha || !headSha) {
+      throw new Error('Could not determine base or head SHA');
+    }
 
     await checkChangelog({
       baseSha,

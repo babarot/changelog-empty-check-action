@@ -10,14 +10,7 @@ jest.mock('@actions/exec', () => ({
 }));
 
 jest.mock('@actions/github', () => ({
-  getOctokit: jest.fn().mockReturnValue({
-    rest: {
-      issues: {
-        addLabels: jest.fn().mockImplementation(() => Promise.resolve({ data: {} })),
-        createComment: jest.fn().mockImplementation(() => Promise.resolve({ data: {} }))
-      }
-    }
-  }),
+  getOctokit: jest.fn(),
   context: {
     repo: {
       owner: 'babarot',
@@ -29,6 +22,15 @@ jest.mock('@actions/github', () => ({
 describe('checkChangelog', () => {
   const mockCore = core as jest.Mocked<typeof core>;
   const mockOctokit = getOctokit as jest.MockedFunction<typeof getOctokit>;
+
+  const baseGitHubClient = {
+    request: jest.fn(),
+    graphql: jest.fn(),
+    log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    hook: { before: jest.fn(), after: jest.fn(), error: jest.fn(), wrap: jest.fn() },
+    auth: jest.fn(),
+    paginate: jest.fn()
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -45,6 +47,17 @@ describe('checkChangelog', () => {
           return '';
       }
     });
+
+    // 基本的なGitHubクライアントのモック
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          addLabels: jest.fn().mockResolvedValue({}),
+          createComment: jest.fn().mockResolvedValue({})
+        }
+      }
+    } as any);
   });
 
   it('should detect empty changelog entries', async () => {
@@ -225,5 +238,103 @@ describe('checkChangelog', () => {
     });
 
     expect(mockCore.setFailed).toHaveBeenCalledWith('Action failed with unknown error');
+  });
+
+  it('should handle label API error with error object', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          addLabels: jest.fn().mockRejectedValue(new Error('API Error')),
+          createComment: jest.fn().mockResolvedValue({})
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    expect(mockCore.error).toHaveBeenCalledWith('Failed to add label');
+    expect(mockCore.error).toHaveBeenCalledWith(expect.stringContaining('API Error'));
+  });
+
+  it('should handle label API error with non-error object', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          addLabels: jest.fn().mockRejectedValue('Unknown error object'),
+          createComment: jest.fn().mockResolvedValue({})
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    expect(mockCore.error).toHaveBeenCalledWith('Failed to add label');
+    expect(mockCore.error).toHaveBeenCalledWith('Unknown error during label addition');
+  });
+
+  it('should handle comment API error', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          addLabels: jest.fn().mockResolvedValue({}),
+          createComment: jest.fn().mockRejectedValue(new Error('Comment Error'))
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    expect(mockCore.error).toHaveBeenCalledWith('Failed to add comment');
   });
 });
