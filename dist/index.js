@@ -30135,14 +30135,43 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const github_1 = __nccwpck_require__(3228);
+const exec_1 = __nccwpck_require__(5236);
 const check_changelog_1 = __nccwpck_require__(3960);
 async function run() {
     try {
         core.info('Starting empty changelog check action...');
-        const baseSha = github_1.context.payload.pull_request?.base.sha || '';
-        const headSha = github_1.context.payload.pull_request?.head.sha || '';
-        core.info(`Base SHA: ${baseSha}`);
-        core.info(`Head SHA: ${headSha}`);
+        const prNumber = parseInt(core.getInput('pull-request-number', { required: true }), 10);
+        core.info(`Pull Request Number: ${prNumber}`);
+        let headSha = '';
+        try {
+            await (0, exec_1.exec)('git', ['rev-parse', 'HEAD'], {
+                listeners: {
+                    stdout: (data) => {
+                        headSha += data.toString().trim();
+                    }
+                }
+            });
+        }
+        catch (error) {
+            core.debug('Failed to get HEAD SHA, falling back to environment variable');
+            headSha = process.env.GITHUB_SHA || github_1.context.sha;
+        }
+        let baseSha = '';
+        try {
+            await (0, exec_1.exec)('git', ['rev-parse', 'HEAD^'], {
+                listeners: {
+                    stdout: (data) => {
+                        baseSha += data.toString().trim();
+                    }
+                }
+            });
+        }
+        catch (error) {
+            core.debug('Failed to get BASE SHA, falling back to environment variable');
+            baseSha = process.env.BASE_SHA || github_1.context.payload.before || '';
+        }
+        core.info(`Using base SHA: ${baseSha}`);
+        core.info(`Using head SHA: ${headSha}`);
         if (!baseSha || !headSha) {
             throw new Error('Could not determine base or head SHA');
         }
@@ -30161,7 +30190,9 @@ async function run() {
         }
     }
 }
-run();
+if (require.main === require.cache[eval('__filename')]) {
+    run();
+}
 
 
 /***/ }),

@@ -1,16 +1,45 @@
 import * as core from '@actions/core';
 import { context } from '@actions/github';
+import { exec } from '@actions/exec';
 import { checkChangelog } from './check-changelog';
 
 export async function run(): Promise<void> {
   try {
     core.info('Starting empty changelog check action...');
 
-    const baseSha = context.payload.pull_request?.base.sha || '';
-    const headSha = context.payload.pull_request?.head.sha || '';
+    const prNumber = parseInt(core.getInput('pull-request-number', { required: true }), 10);
+    core.info(`Pull Request Number: ${prNumber}`);
 
-    core.info(`Base SHA: ${baseSha}`);
-    core.info(`Head SHA: ${headSha}`);
+    let headSha = '';
+    try {
+      await exec('git', ['rev-parse', 'HEAD'], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            headSha += data.toString().trim();
+          }
+        }
+      });
+    } catch (error) {
+      core.debug('Failed to get HEAD SHA, falling back to environment variable');
+      headSha = process.env.GITHUB_SHA || context.sha;
+    }
+
+    let baseSha = '';
+    try {
+      await exec('git', ['rev-parse', 'HEAD^'], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            baseSha += data.toString().trim();
+          }
+        }
+      });
+    } catch (error) {
+      core.debug('Failed to get BASE SHA, falling back to environment variable');
+      baseSha = process.env.BASE_SHA || context.payload.before || '';
+    }
+
+    core.info(`Using base SHA: ${baseSha}`);
+    core.info(`Using head SHA: ${headSha}`);
 
     if (!baseSha || !headSha) {
       throw new Error('Could not determine base or head SHA');
@@ -31,4 +60,6 @@ export async function run(): Promise<void> {
   }
 }
 
-run();
+if (require.main === module) {
+  run();
+}
