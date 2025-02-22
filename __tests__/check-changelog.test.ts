@@ -1,13 +1,14 @@
 import { checkChangelog } from '../src/check-changelog';
 import * as core from '@actions/core';
-import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import { getOctokit } from '@actions/github';
 import { Context } from '@actions/github/lib/context';
 
-jest.mock('@actions/exec');
 jest.mock('@actions/core');
 jest.mock('fs');
+jest.mock('@actions/exec', () => ({
+  exec: jest.fn()
+}));
 
 describe('checkChangelog', () => {
   const mockGithub = {} as ReturnType<typeof getOctokit>;
@@ -19,8 +20,8 @@ describe('checkChangelog', () => {
 
   it('should detect empty changelog entries', async () => {
     // Mock exec
-    const mockExec = jest.spyOn(exec, 'exec');
-    mockExec.mockImplementation(async (commandLine: string, args?: string[], options?: exec.ExecOptions): Promise<number> => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_commandLine: string, _args?: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
       const mockDiff = `
 +## [v1.4.2](https://github.com/user/repo/compare/v1.4.1...v1.4.2)
  ## [v1.4.1](https://github.com/user/repo/compare/v1.4.0...v1.4.1)
@@ -30,7 +31,7 @@ describe('checkChangelog', () => {
       if (options?.listeners?.stdout) {
         options.listeners.stdout(Buffer.from(mockDiff));
       }
-      return Promise.resolve(0);
+      return 0;
     });
 
     // Mock fs
@@ -43,7 +44,7 @@ describe('checkChangelog', () => {
 ### Added
 - New feature
 `;
-    jest.spyOn(fs, 'readFileSync').mockReturnValue(mockChangelog);
+    (fs.readFileSync as jest.Mock).mockReturnValue(mockChangelog);
 
     await checkChangelog({
       github: mockGithub,
@@ -60,8 +61,8 @@ describe('checkChangelog', () => {
 
   it('should handle non-empty changelog entries', async () => {
     // Mock exec
-    const mockExec = jest.spyOn(exec, 'exec');
-    mockExec.mockImplementation(async (commandLine: string, args?: string[], options?: exec.ExecOptions): Promise<number> => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_commandLine: string, _args?: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
       const mockDiff = `
 +## [v1.4.2](https://github.com/user/repo/compare/v1.4.1...v1.4.2)
 +### Added
@@ -71,7 +72,7 @@ describe('checkChangelog', () => {
       if (options?.listeners?.stdout) {
         options.listeners.stdout(Buffer.from(mockDiff));
       }
-      return Promise.resolve(0);
+      return 0;
     });
 
     // Mock fs
@@ -84,7 +85,7 @@ describe('checkChangelog', () => {
 
 ## [v1.4.1](https://github.com/user/repo/compare/v1.4.0...v1.4.1)
 `;
-    jest.spyOn(fs, 'readFileSync').mockReturnValue(mockChangelog);
+    (fs.readFileSync as jest.Mock).mockReturnValue(mockChangelog);
 
     await checkChangelog({
       github: mockGithub,
@@ -101,8 +102,8 @@ describe('checkChangelog', () => {
 
   it('should handle errors properly', async () => {
     // Mock exec to throw error
-    const mockExec = jest.spyOn(exec, 'exec');
-    mockExec.mockRejectedValue(new Error('Git diff failed'));
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockRejectedValue(new Error('Git diff failed'));
 
     await checkChangelog({
       github: mockGithub,
