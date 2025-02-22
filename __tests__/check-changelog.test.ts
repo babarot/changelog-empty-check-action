@@ -8,6 +8,11 @@ jest.mock('@actions/core', () => ({
   warning: jest.fn(),
   setFailed: jest.fn(),
   debug: jest.fn(),
+  getInput: jest.fn().mockImplementation((name: string) => {
+    if (name === 'pull-request-number') return '1';
+    if (name === 'label-name') return 'empty-changelog';
+    return '';
+  }),
 }));
 
 jest.mock('fs');
@@ -15,8 +20,25 @@ jest.mock('@actions/exec', () => ({
   exec: jest.fn()
 }));
 
+jest.mock('@actions/github', () => ({
+  ...jest.requireActual('@actions/github'),
+  context: {
+    repo: {
+      owner: 'babarot',
+      repo: 'test-repo'
+    }
+  }
+}));
+
 describe('checkChangelog', () => {
-  const mockGithub = {} as ReturnType<typeof getOctokit>;
+  const mockGithub = {
+    rest: {
+      issues: {
+        addLabels: jest.fn().mockImplementation(() => Promise.resolve({ data: {} })),
+        createComment: jest.fn().mockImplementation(() => Promise.resolve({ data: {} }))
+      }
+    }
+  } as unknown as ReturnType<typeof getOctokit>;
   const mockContext = {} as Context;
   const mockCore = require('@actions/core');
 
@@ -63,6 +85,8 @@ describe('checkChangelog', () => {
     expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'true');
     expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('v1.4.2'));
     expect(mockCore.warning).toHaveBeenCalledWith(expect.stringContaining('Empty changelog entries detected'));
+    expect(mockGithub.rest.issues.addLabels).toHaveBeenCalled();
+    expect(mockGithub.rest.issues.createComment).toHaveBeenCalled();
   });
 
   it('should handle non-empty changelog entries', async () => {
@@ -104,6 +128,8 @@ describe('checkChangelog', () => {
     expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'false');
     expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', '');
     expect(mockCore.warning).not.toHaveBeenCalled();
+    expect(mockGithub.rest.issues.addLabels).not.toHaveBeenCalled();
+    expect(mockGithub.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
   it('should handle git diff errors properly', async () => {
