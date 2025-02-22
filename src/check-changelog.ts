@@ -1,5 +1,5 @@
 import { exec } from '@actions/exec';
-import { getOctokit } from '@actions/github';
+import { getOctokit, context } from '@actions/github';
 import { Context } from '@actions/github/lib/context';
 import type * as coreType from '@actions/core';
 import * as fs from 'fs';
@@ -19,7 +19,8 @@ interface ChangelogEntry {
 }
 
 export async function checkChangelog(options: CheckChangelogOptions): Promise<void> {
-  const { core, baseSha, headSha } = options;
+  const { github, core, baseSha, headSha } = options;
+  const prNumber = parseInt(core.getInput('pull-request-number'), 10);
 
   try {
     // Get diff with base branch
@@ -74,10 +75,24 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
       core.setOutput('has_empty_changelog', 'true');
       core.setOutput('empty_headers', headers.join('\n'));
 
+      await github.rest.issues.addLabels({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        labels: [core.getInput('label-name')]
+      });
+
       const warningMessage = [
         '🚨 Empty changelog entries detected:',
         ...headers.map(h => `- ${h} (No content provided)`)
       ].join('\n');
+
+      await github.rest.issues.createComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        body: warningMessage
+      });
 
       core.warning(warningMessage);
     } else {
