@@ -1,6 +1,5 @@
 import { exec } from '@actions/exec';
 import { getOctokit, context } from '@actions/github';
-import { Context } from '@actions/github/lib/context';
 import * as core from '@actions/core';
 import * as fs from 'fs';
 
