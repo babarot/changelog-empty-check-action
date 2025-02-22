@@ -1,10 +1,15 @@
 import { checkChangelog } from '../src/check-changelog';
-import * as core from '@actions/core';
-import * as fs from 'fs';
 import { getOctokit } from '@actions/github';
 import { Context } from '@actions/github/lib/context';
+import fs from 'fs';
 
-jest.mock('@actions/core');
+jest.mock('@actions/core', () => ({
+  setOutput: jest.fn(),
+  warning: jest.fn(),
+  setFailed: jest.fn(),
+  debug: jest.fn(),
+}));
+
 jest.mock('fs');
 jest.mock('@actions/exec', () => ({
   exec: jest.fn()
@@ -13,6 +18,7 @@ jest.mock('@actions/exec', () => ({
 describe('checkChangelog', () => {
   const mockGithub = {} as ReturnType<typeof getOctokit>;
   const mockContext = {} as Context;
+  const mockCore = require('@actions/core');
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -49,14 +55,14 @@ describe('checkChangelog', () => {
     await checkChangelog({
       github: mockGithub,
       context: mockContext,
-      core,
+      core: mockCore,
       baseSha: 'base-sha',
       headSha: 'head-sha'
     });
 
-    expect(core.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'true');
-    expect(core.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('v1.4.2'));
-    expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Empty changelog entries detected'));
+    expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'true');
+    expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('v1.4.2'));
+    expect(mockCore.warning).toHaveBeenCalledWith(expect.stringContaining('Empty changelog entries detected'));
   });
 
   it('should handle non-empty changelog entries', async () => {
@@ -90,17 +96,17 @@ describe('checkChangelog', () => {
     await checkChangelog({
       github: mockGithub,
       context: mockContext,
-      core,
+      core: mockCore,
       baseSha: 'base-sha',
       headSha: 'head-sha'
     });
 
-    expect(core.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'false');
-    expect(core.setOutput).toHaveBeenCalledWith('empty_headers', '');
-    expect(core.warning).not.toHaveBeenCalled();
+    expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'false');
+    expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', '');
+    expect(mockCore.warning).not.toHaveBeenCalled();
   });
 
-  it('should handle errors properly', async () => {
+  it('should handle git diff errors properly', async () => {
     // Mock exec to throw error
     const execMock = jest.requireMock('@actions/exec').exec;
     execMock.mockRejectedValue(new Error('Git diff failed'));
@@ -108,11 +114,46 @@ describe('checkChangelog', () => {
     await checkChangelog({
       github: mockGithub,
       context: mockContext,
-      core,
+      core: mockCore,
       baseSha: 'base-sha',
       headSha: 'head-sha'
     });
 
-    expect(core.setFailed).toHaveBeenCalledWith('Action failed: Git diff failed');
+    expect(mockCore.setFailed).toHaveBeenCalledWith('Action failed: Git diff failed');
+  });
+
+  it('should handle file read errors properly', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockResolvedValue(0);
+
+    // Mock fs to throw error
+    (fs.readFileSync as jest.Mock).mockImplementation(() => {
+      throw new Error('File read failed');
+    });
+
+    await checkChangelog({
+      github: mockGithub,
+      context: mockContext,
+      core: mockCore,
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith('Action failed: File read failed');
+  });
+
+  it('should handle unknown errors properly', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockRejectedValue('Unknown error'); // 文字列エラー
+
+    await checkChangelog({
+      github: mockGithub,
+      context: mockContext,
+      core: mockCore,
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith('Action failed with unknown error');
   });
 });
