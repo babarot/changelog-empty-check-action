@@ -29958,6 +29958,19 @@ const exec_1 = __nccwpck_require__(5236);
 const github_1 = __nccwpck_require__(3228);
 const core = __importStar(__nccwpck_require__(7484));
 const fs = __importStar(__nccwpck_require__(9896));
+async function hasExistingComment(github, prNumber, content) {
+    try {
+        const { data: comments } = await github.rest.issues.listComments({
+            ...github_1.context.repo,
+            issue_number: prNumber,
+        });
+        return comments.some(comment => comment.body === content);
+    }
+    catch (error) {
+        core.warning('Failed to check existing comments, proceeding with comment creation');
+        return false;
+    }
+}
 async function checkChangelog(options) {
     core.info('Starting changelog check action...');
     const { baseSha, headSha } = options;
@@ -29982,14 +29995,12 @@ async function checkChangelog(options) {
                 }
             }
         });
-        core.debug(`Diff output length: ${diffOutput.length} characters`);
+        core.debug(`Diff output:\n${diffOutput}`);
         // Read current CHANGELOG
         core.info('Reading current CHANGELOG.md...');
         const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
         const lines = changelog.split('\n');
         core.debug(`CHANGELOG.md has ${lines.length} lines`);
-        // Find new headers in diff
-        core.info('Analyzing changelog entries...');
         const newHeaders = diffOutput
             .split('\n')
             .filter(line => line.startsWith('+## ['))
@@ -30051,22 +30062,29 @@ async function checkChangelog(options) {
                 '🚨 Empty changelog entries detected:',
                 ...headers.map(h => `- ${h} (No content provided)`)
             ].join('\n');
-            // Add comment to PR
-            core.info('Adding comment to PR...');
-            try {
-                const commentResponse = await github.rest.issues.createComment({
-                    owner: github_1.context.repo.owner,
-                    repo: github_1.context.repo.repo,
-                    issue_number: prNumber,
-                    body: warningMessage
-                });
-                core.debug(`Comment API Response: ${JSON.stringify(commentResponse)}`);
-                core.info('Comment added successfully');
+            // Add comment to PR only if a similar comment doesn't exist
+            core.info('Checking for existing comments...');
+            const commentExists = await hasExistingComment(github, prNumber, warningMessage);
+            if (!commentExists) {
+                core.info('Adding comment to PR...');
+                try {
+                    const commentResponse = await github.rest.issues.createComment({
+                        owner: github_1.context.repo.owner,
+                        repo: github_1.context.repo.repo,
+                        issue_number: prNumber,
+                        body: warningMessage
+                    });
+                    core.debug(`Comment API Response: ${JSON.stringify(commentResponse)}`);
+                    core.info('Comment added successfully');
+                }
+                catch (e) {
+                    core.error('Failed to add comment');
+                    core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
+                    throw e;
+                }
             }
-            catch (e) {
-                core.error('Failed to add comment');
-                core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
-                throw e;
+            else {
+                core.info('Similar comment already exists, skipping comment creation');
             }
             core.warning(warningMessage);
         }
@@ -30074,6 +30092,45 @@ async function checkChangelog(options) {
             core.info('No empty changelog entries found');
             core.setOutput('has_empty_changelog', 'false');
             core.setOutput('empty_headers', '');
+            // Check if the label exists and remove it
+            core.info(`Checking for existing label "${labelName}" on PR #${prNumber}...`);
+            try {
+                const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+                    owner: github_1.context.repo.owner,
+                    repo: github_1.context.repo.repo,
+                    issue_number: prNumber
+                });
+                if (labels.some(label => label.name === labelName)) {
+                    core.info(`Found "${labelName}" label, attempting to remove...`);
+                    await github.rest.issues.removeLabel({
+                        owner: github_1.context.repo.owner,
+                        repo: github_1.context.repo.repo,
+                        issue_number: prNumber,
+                        name: labelName
+                    });
+                    core.info('Label removed successfully');
+                    const successMessage = '✅ Changelog entry has been filled';
+                    const commentExists = await hasExistingComment(github, prNumber, successMessage);
+                    if (!commentExists) {
+                        await github.rest.issues.createComment({
+                            owner: github_1.context.repo.owner,
+                            repo: github_1.context.repo.repo,
+                            issue_number: prNumber,
+                            body: successMessage
+                        });
+                        core.info('Success comment added');
+                    }
+                    else {
+                        core.info('Success comment already exists, skipping comment creation');
+                    }
+                }
+            }
+            catch (e) {
+                if (e instanceof Error && !e.message.includes('Label does not exist')) {
+                    core.error('Failed to check/remove label');
+                    core.error(e.message);
+                }
+            }
         }
     }
     catch (error) {

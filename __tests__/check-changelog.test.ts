@@ -48,7 +48,6 @@ describe('checkChangelog', () => {
       }
     });
 
-    // 基本的なGitHubクライアントのモック
     mockOctokit.mockReturnValue({
       ...baseGitHubClient,
       rest: {
@@ -337,4 +336,158 @@ describe('checkChangelog', () => {
 
     expect(mockCore.error).toHaveBeenCalledWith('Failed to add comment');
   });
+
+  it('should check for duplicate comments', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+    const warningMessage = '🚨 Empty changelog entries detected:\n- ## [v1.4.2] (No content provided)';
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          addLabels: jest.fn().mockResolvedValue({}),
+          createComment: jest.fn().mockResolvedValue({}),
+          listComments: jest.fn().mockResolvedValue({
+            data: [{ body: warningMessage }]
+          })
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    const octokitInstance = mockOctokit.mock.results[0].value;
+    expect(octokitInstance.rest.issues.createComment).not.toHaveBeenCalled();
+    expect(mockCore.info).toHaveBeenCalledWith('Similar comment already exists, skipping comment creation');
+  });
+
+  it('should handle listComments API error', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          addLabels: jest.fn().mockResolvedValue({}),
+          createComment: jest.fn().mockResolvedValue({}),
+          listComments: jest.fn().mockRejectedValue(new Error('Failed to list comments'))
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    expect(mockCore.warning).toHaveBeenCalledWith('Failed to check existing comments, proceeding with comment creation');
+  });
+
+  it('should handle label removal and success comment', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]\n+### Added\n+- New feature`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+### Added
+- New feature
+`);
+
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          listLabelsOnIssue: jest.fn().mockResolvedValue({
+            data: [{ name: 'empty-changelog' }]
+          }),
+          removeLabel: jest.fn().mockResolvedValue({}),
+          createComment: jest.fn().mockResolvedValue({}),
+          listComments: jest.fn().mockResolvedValue({ data: [] })
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    const octokitInstance = mockOctokit.mock.results[0].value;
+    expect(octokitInstance.rest.issues.removeLabel).toHaveBeenCalled();
+    expect(octokitInstance.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: '✅ Changelog entry has been filled'
+      })
+    );
+  });
+
+  it('should handle non-existent label gracefully', async () => {
+    const execMock = jest.requireMock('@actions/exec').exec;
+    execMock.mockImplementation(async (_cmd: string, _args: string[], options?: { listeners?: { stdout?: (data: Buffer) => void } }) => {
+      if (options?.listeners?.stdout) {
+        options.listeners.stdout(Buffer.from(`+## [v1.4.2]\n+### Added\n+- New feature`));
+      }
+      return 0;
+    });
+
+    (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+### Added
+- New feature
+`);
+
+    mockOctokit.mockReturnValue({
+      ...baseGitHubClient,
+      rest: {
+        issues: {
+          listLabelsOnIssue: jest.fn().mockResolvedValue({
+            data: []
+          }),
+          removeLabel: jest.fn().mockRejectedValue(new Error('Label does not exist')),
+          listComments: jest.fn().mockResolvedValue({ data: [] })
+        }
+      }
+    } as any);
+
+    await checkChangelog({
+      baseSha: 'base-sha',
+      headSha: 'head-sha'
+    });
+
+    const octokitInstance = mockOctokit.mock.results[0].value;
+    expect(octokitInstance.rest.issues.removeLabel).not.toHaveBeenCalled();
+  });
 });
+

@@ -14,6 +14,19 @@ interface ChangelogEntry {
   lineNumber: number;
 }
 
+async function hasExistingComment(github: ReturnType<typeof getOctokit>, prNumber: number, content: string): Promise<boolean> {
+  try {
+    const { data: comments } = await github.rest.issues.listComments({
+      ...context.repo,
+      issue_number: prNumber,
+    });
+    return comments.some(comment => comment.body === content);
+  } catch (error) {
+    core.warning('Failed to check existing comments, proceeding with comment creation');
+    return false;
+  }
+}
+
 export async function checkChangelog(options: CheckChangelogOptions): Promise<void> {
   core.info('Starting changelog check action...');
 
@@ -43,7 +56,7 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
         }
       }
     });
-    core.debug(`Diff output length: ${diffOutput.length} characters`);
+    core.debug(`Diff output:\n${diffOutput}`);
 
     // Read current CHANGELOG
     core.info('Reading current CHANGELOG.md...');
@@ -61,7 +74,6 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
     newHeaders.forEach(header => core.debug(`  ${header}`));
 
     const emptyEntries: ChangelogEntry[] = [];
-    const filledEntries: ChangelogEntry[] = [];
 
     for (const header of newHeaders) {
       core.debug(`Checking content for header: ${header}`);
@@ -92,20 +104,12 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
           content: [],
           lineNumber: headerIndex + 1
         });
-      } else {
-        core.debug(`Content found for header: ${header}`);
-        filledEntries.push({
-          header: header.trim(),
-          content: content,
-          lineNumber: headerIndex + 1
-        });
       }
     }
 
     if (emptyEntries.length > 0) {
       const headers = emptyEntries.map(entry => entry.header);
       core.setOutput('has_empty_changelog', 'true');
-      core.setOutput('has_filled_changelog', 'false');
       core.setOutput('empty_headers', headers.join('\n'));
 
       core.info(`Found ${emptyEntries.length} empty changelog entries`);
@@ -133,74 +137,76 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
         ...headers.map(h => `- ${h} (No content provided)`)
       ].join('\n');
 
-      // Add comment to PR
-      core.info('Adding comment to PR...');
-      try {
-        const commentResponse = await github.rest.issues.createComment({
-          owner: context.repo.owner,
-          repo: context.repo.repo,
-          issue_number: prNumber,
-          body: warningMessage
-        });
-        core.debug(`Comment API Response: ${JSON.stringify(commentResponse)}`);
-        core.info('Comment added successfully');
-      } catch (e) {
-        core.error('Failed to add comment');
-        core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
-        throw e;
+      // Add comment to PR only if a similar comment doesn't exist
+      core.info('Checking for existing comments...');
+      const commentExists = await hasExistingComment(github, prNumber, warningMessage);
+
+      if (!commentExists) {
+        core.info('Adding comment to PR...');
+        try {
+          const commentResponse = await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+            body: warningMessage
+          });
+          core.debug(`Comment API Response: ${JSON.stringify(commentResponse)}`);
+          core.info('Comment added successfully');
+        } catch (e) {
+          core.error('Failed to add comment');
+          core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
+          throw e;
+        }
+      } else {
+        core.info('Similar comment already exists, skipping comment creation');
       }
 
       core.warning(warningMessage);
-    } else if (filledEntries.length > 0) {
+    } else {
+      core.info('No empty changelog entries found');
       core.setOutput('has_empty_changelog', 'false');
-      core.setOutput('has_filled_changelog', 'true');
       core.setOutput('empty_headers', '');
 
-      core.info('Previously empty entries have been filled');
-
-      // Remove label if it exists
-      core.info(`Removing label "${labelName}" from PR #${prNumber}...`);
+      // Check if the label exists and remove it
+      core.info(`Checking for existing label "${labelName}" on PR #${prNumber}...`);
       try {
-        await github.rest.issues.removeLabel({
+        const { data: labels } = await github.rest.issues.listLabelsOnIssue({
           owner: context.repo.owner,
           repo: context.repo.repo,
-          issue_number: prNumber,
-          name: labelName
+          issue_number: prNumber
         });
-        core.info('Label removed successfully');
+
+        if (labels.some(label => label.name === labelName)) {
+          core.info(`Found "${labelName}" label, attempting to remove...`);
+          await github.rest.issues.removeLabel({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: prNumber,
+            name: labelName
+          });
+          core.info('Label removed successfully');
+
+          const successMessage = '✅ Changelog entry has been filled';
+          const commentExists = await hasExistingComment(github, prNumber, successMessage);
+
+          if (!commentExists) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: successMessage
+            });
+            core.info('Success comment added');
+          } else {
+            core.info('Success comment already exists, skipping comment creation');
+          }
+        }
       } catch (e) {
         if (e instanceof Error && !e.message.includes('Label does not exist')) {
-          core.error('Failed to remove label');
+          core.error('Failed to check/remove label');
           core.error(e.message);
-          throw e;
         }
       }
-
-      const successMessage = [
-        '✅ Changelog entries have been filled:',
-        ...filledEntries.map(entry => `- ${entry.header}`)
-      ].join('\n');
-
-      // Add success comment
-      core.info('Adding success comment to PR...');
-      try {
-        await github.rest.issues.createComment({
-          owner: context.repo.owner,
-          repo: context.repo.repo,
-          issue_number: prNumber,
-          body: successMessage
-        });
-        core.info('Success comment added');
-      } catch (e) {
-        core.error('Failed to add success comment');
-        core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
-        throw e;
-      }
-    } else {
-      core.info('No changelog entry changes detected');
-      core.setOutput('has_empty_changelog', 'false');
-      core.setOutput('has_filled_changelog', 'false');
-      core.setOutput('empty_headers', '');
     }
   } catch (error) {
     core.error('An error occurred during changelog check');
