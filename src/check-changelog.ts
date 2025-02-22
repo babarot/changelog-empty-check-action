@@ -51,8 +51,6 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
     const lines = changelog.split('\n');
     core.debug(`CHANGELOG.md has ${lines.length} lines`);
 
-    // Find new headers in diff
-    core.info('Analyzing changelog entries...');
     const newHeaders = diffOutput
       .split('\n')
       .filter(line => line.startsWith('+## ['))
@@ -63,6 +61,7 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
     newHeaders.forEach(header => core.debug(`  ${header}`));
 
     const emptyEntries: ChangelogEntry[] = [];
+    const filledEntries: ChangelogEntry[] = [];
 
     for (const header of newHeaders) {
       core.debug(`Checking content for header: ${header}`);
@@ -93,12 +92,20 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
           content: [],
           lineNumber: headerIndex + 1
         });
+      } else {
+        core.debug(`Content found for header: ${header}`);
+        filledEntries.push({
+          header: header.trim(),
+          content: content,
+          lineNumber: headerIndex + 1
+        });
       }
     }
 
     if (emptyEntries.length > 0) {
       const headers = emptyEntries.map(entry => entry.header);
       core.setOutput('has_empty_changelog', 'true');
+      core.setOutput('has_filled_changelog', 'false');
       core.setOutput('empty_headers', headers.join('\n'));
 
       core.info(`Found ${emptyEntries.length} empty changelog entries`);
@@ -144,9 +151,55 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
       }
 
       core.warning(warningMessage);
-    } else {
-      core.info('No empty changelog entries found');
+    } else if (filledEntries.length > 0) {
       core.setOutput('has_empty_changelog', 'false');
+      core.setOutput('has_filled_changelog', 'true');
+      core.setOutput('empty_headers', '');
+
+      core.info('Previously empty entries have been filled');
+
+      // Remove label if it exists
+      core.info(`Removing label "${labelName}" from PR #${prNumber}...`);
+      try {
+        await github.rest.issues.removeLabel({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          issue_number: prNumber,
+          name: labelName
+        });
+        core.info('Label removed successfully');
+      } catch (e) {
+        if (e instanceof Error && !e.message.includes('Label does not exist')) {
+          core.error('Failed to remove label');
+          core.error(e.message);
+          throw e;
+        }
+      }
+
+      const successMessage = [
+        '✅ Changelog entries have been filled:',
+        ...filledEntries.map(entry => `- ${entry.header}`)
+      ].join('\n');
+
+      // Add success comment
+      core.info('Adding success comment to PR...');
+      try {
+        await github.rest.issues.createComment({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          issue_number: prNumber,
+          body: successMessage
+        });
+        core.info('Success comment added');
+      } catch (e) {
+        core.error('Failed to add success comment');
+        core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
+        throw e;
+      }
+    } else {
+      core.info('No changelog entry changes detected');
+      core.setOutput('has_empty_changelog', 'false');
+      core.setOutput('has_filled_changelog', 'false');
       core.setOutput('empty_headers', '');
     }
   } catch (error) {

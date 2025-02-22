@@ -15,10 +15,12 @@ inputs:
     required: true
 
 outputs:
-  has_empty_changelog:
-    description: 'Whether empty changelog entries were found'
   empty_headers:
     description: 'List of empty changelog headers'
+  has_empty_changelog:
+    description: 'Whether empty changelog entries were found'
+  has_filled_changelog:
+    description: 'Whether previously empty changelog entries have been filled'
 
 runs:
   using: 'node20'
