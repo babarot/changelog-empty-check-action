@@ -1,5 +1,5 @@
 import { checkChangelog } from '../src/check-changelog';
-import { getOctokit, context } from '@actions/github';
+import { getOctokit } from '@actions/github';
 import * as core from '@actions/core';
 import * as fs from 'fs';
 
