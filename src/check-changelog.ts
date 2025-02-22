@@ -15,16 +15,20 @@ interface ChangelogEntry {
 }
 
 export async function checkChangelog(options: CheckChangelogOptions): Promise<void> {
-  const { baseSha, headSha } = options;
-  core.info(`Starting changelog check between ${baseSha} and ${headSha}`);
+  core.info('Starting changelog check action...');
 
+  const { baseSha, headSha } = options;
+  core.info(`Checking changelog between ${baseSha} and ${headSha}`);
+
+  core.info('Reading input parameters...');
   const token = core.getInput('github-token', { required: true });
   const prNumber = parseInt(core.getInput('pull-request-number', { required: true }), 10);
   const labelName = core.getInput('label-name', { required: false }) || 'empty-changelog';
 
-  core.debug(`PR Number: ${prNumber}`);
-  core.debug(`Label Name: ${labelName}`);
+  core.info(`Input parameters: PR #${prNumber}, Label: ${labelName}`);
+  core.debug(`Using token: ${token.slice(0, 4)}...`);
 
+  core.info('Initializing GitHub client...');
   const github = getOctokit(token);
   core.debug('GitHub client initialized');
 
@@ -101,12 +105,21 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
 
       // Add label to PR
       core.info(`Adding label "${labelName}" to PR #${prNumber}...`);
-      await github.rest.issues.addLabels({
-        ...context.repo,
-        issue_number: prNumber,
-        labels: [labelName]
-      });
-      core.info('Label added successfully');
+      core.debug(`Repository: ${context.repo.owner}/${context.repo.repo}`);
+      try {
+        const labelResponse = await github.rest.issues.addLabels({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          issue_number: prNumber,
+          labels: [labelName]
+        });
+        core.debug(`Label API Response: ${JSON.stringify(labelResponse)}`);
+        core.info('Label added successfully');
+      } catch (e) {
+        core.error('Failed to add label');
+        core.error(e instanceof Error ? e.message : 'Unknown error during label addition');
+        throw e;
+      }
 
       const warningMessage = [
         '🚨 Empty changelog entries detected:',
@@ -115,12 +128,20 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
 
       // Add comment to PR
       core.info('Adding comment to PR...');
-      await github.rest.issues.createComment({
-        ...context.repo,
-        issue_number: prNumber,
-        body: warningMessage
-      });
-      core.info('Comment added successfully');
+      try {
+        const commentResponse = await github.rest.issues.createComment({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          issue_number: prNumber,
+          body: warningMessage
+        });
+        core.debug(`Comment API Response: ${JSON.stringify(commentResponse)}`);
+        core.info('Comment added successfully');
+      } catch (e) {
+        core.error('Failed to add comment');
+        core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
+        throw e;
+      }
 
       core.warning(warningMessage);
     } else {

@@ -1,10 +1,11 @@
 name: 'Empty Changelog Check'
 description: 'Check for empty changelog entries in pull requests'
+author: 'babarot'
+
 inputs:
   github-token:
     description: 'GitHub token for API operations'
     required: true
-    default: ${{ github.token }}
   label-name:
     description: 'Label to add when empty changelog is detected'
     required: false
