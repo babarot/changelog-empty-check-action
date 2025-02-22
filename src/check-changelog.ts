@@ -1,13 +1,13 @@
 import { exec } from '@actions/exec';
 import { getOctokit } from '@actions/github';
 import { Context } from '@actions/github/lib/context';
-import * as core from '@actions/core';
+import type * as coreType from '@actions/core';
 import * as fs from 'fs';
 
 interface CheckChangelogOptions {
   github: ReturnType<typeof getOctokit>;
   context: Context;
-  core: typeof import('@actions/core');
+  core: typeof coreType;
   baseSha: string;
   headSha: string;
 }
@@ -19,7 +19,7 @@ interface ChangelogEntry {
 }
 
 export async function checkChangelog(options: CheckChangelogOptions): Promise<void> {
-  const { github, context, core, baseSha, headSha } = options;
+  const { core, baseSha, headSha } = options;
 
   try {
     // Get diff with base branch
