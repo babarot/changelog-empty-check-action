@@ -1,0 +1,39 @@
+name: 'Empty Changelog Check'
+description: 'Check for empty changelog entries in pull requests'
+author: 'babarot'
+
+inputs:
+  github-token:
+    description: 'GitHub token for API operations'
+    required: true
+  label-name:
+    description: 'Label to add when empty changelog is detected'
+    required: false
+    default: 'empty-changelog'
+  pull-request-number:
+    description: 'Pull request number to check'
+    required: true
+  empty-message:
+    description: 'Message template for empty changelog entries (leave empty to skip comment)'
+    required: false
+    default: '🚨 Empty changelog entries detected'
+  filled-message:
+    description: 'Message template for filled changelog entries (leave empty to skip comment)'
+    required: false
+    default: '✅ Changelog entry has been filled'
+
+outputs:
+  has_empty_changelog:
+    description: 'Whether empty changelog entries were found'
+  empty_headers:
+    description: 'List of empty changelog headers'
+  has_filled_changelog:
+    description: 'Whether previously empty changelog entries have been filled'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'alert-circle'
+  color: 'yellow'
