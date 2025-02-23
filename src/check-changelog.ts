@@ -14,17 +14,78 @@ interface ChangelogEntry {
   lineNumber: number;
 }
 
-// Helper function to check if a similar comment already exists
-async function hasExistingComment(github: ReturnType<typeof getOctokit>, prNumber: number, content: string): Promise<boolean> {
+interface ExistingComment {
+  id: number;
+  body: string;
+}
+
+// Helper function to find existing warning or success comment
+async function findExistingComment(
+  github: ReturnType<typeof getOctokit>,
+  prNumber: number,
+  warningMessage: string,
+  successMessage: string
+): Promise<ExistingComment | null> {
   try {
     const { data: comments } = await github.rest.issues.listComments({
       ...context.repo,
       issue_number: prNumber,
     });
-    return comments.some(comment => comment.body === content);
+
+    const existingComment = comments.find(comment =>
+      comment.body && (comment.body === warningMessage || comment.body === successMessage)
+    );
+
+    if (!existingComment || !existingComment.body) {
+      return null;
+    }
+
+    return {
+      id: existingComment.id,
+      body: existingComment.body
+    };
   } catch (error) {
-    core.warning('Failed to check existing comments, proceeding with comment creation');
-    return false;
+    core.warning('Failed to check existing comments');
+    return null;
+  }
+}
+
+// Helper function to update or create comment
+async function updateOrCreateComment(
+  github: ReturnType<typeof getOctokit>,
+  prNumber: number,
+  newMessage: string,
+  warningMessage: string,
+  successMessage: string
+): Promise<void> {
+  const existingComment = await findExistingComment(github, prNumber, warningMessage, successMessage);
+
+  if (existingComment) {
+    // Update existing comment
+    try {
+      await github.rest.issues.updateComment({
+        ...context.repo,
+        comment_id: existingComment.id,
+        body: newMessage
+      });
+      core.info(`Updated existing ${existingComment.body === warningMessage ? 'warning' : 'success'} comment`);
+    } catch (error) {
+      core.error('Failed to add comment');
+      throw error;
+    }
+  } else {
+    // Create new comment
+    try {
+      await github.rest.issues.createComment({
+        ...context.repo,
+        issue_number: prNumber,
+        body: newMessage
+      });
+      core.info('Created new comment');
+    } catch (error) {
+      core.error('Failed to add comment');
+      throw error;
+    }
   }
 }
 
@@ -140,43 +201,11 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
         throw e;
       }
 
-      // Add comment if warning message is provided
+      // Add or update warning comment if message is provided
       if (warningMessage) {
-        core.info('Checking for existing comments...');
-        try {
-          const commentExists = await hasExistingComment(github, prNumber, warningMessage);
-
-          if (!commentExists) {
-            core.info('Adding comment to PR...');
-            try {
-              const commentResponse = await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: warningMessage
-              });
-              core.debug(`Comment API Response: ${JSON.stringify(commentResponse)}`);
-              core.info('Comment added successfully');
-            } catch (e) {
-              core.error('Failed to add comment');
-              core.error(e instanceof Error ? e.message : 'Unknown error during comment addition');
-              throw e;
-            }
-          } else {
-            core.info('Similar comment already exists, skipping comment creation');
-          }
-        } catch (e) {
-          core.warning('Failed to check existing comments, proceeding with comment creation');
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: prNumber,
-            body: warningMessage
-          });
-        }
+        core.info('Updating/creating warning comment...');
+        await updateOrCreateComment(github, prNumber, warningMessage, warningMessage, successMessage);
       }
-
-      core.warning('Empty changelog entries detected');
     } else {
       // No empty entries found
       core.info('No empty changelog entries found');
@@ -202,21 +231,10 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
           });
           core.info('Label removed successfully');
 
-          // Add success comment if message is provided
+          // Add or update success comment if message is provided
           if (successMessage) {
-            const commentExists = await hasExistingComment(github, prNumber, successMessage);
-
-            if (!commentExists) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: successMessage
-              });
-              core.info('Success comment added');
-            } else {
-              core.info('Success comment already exists, skipping comment creation');
-            }
+            core.info('Updating/creating success comment...');
+            await updateOrCreateComment(github, prNumber, successMessage, warningMessage, successMessage);
           }
         }
       } catch (e) {
