@@ -60,6 +60,12 @@ async function updateOrCreateComment(
 ): Promise<void> {
   const existingComment = await findExistingComment(github, prNumber, warningMessage, successMessage);
 
+  // Skip if trying to write the same warning message that already exists
+  if (newMessage === warningMessage && existingComment?.body === warningMessage) {
+    core.info('Skipping comment update - warning message already exists');
+    return;
+  }
+
   if (existingComment) {
     // Update existing comment
     try {

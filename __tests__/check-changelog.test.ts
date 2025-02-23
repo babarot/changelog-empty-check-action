@@ -124,7 +124,7 @@ describe('checkChangelog', () => {
   });
 
   describe('updateOrCreateComment function', () => {
-    it('should update existing comment successfully', async () => {
+    it('should skip updating when trying to post the same warning message', async () => {
       const client = {
         ...baseGitHubClient,
         rest: {
@@ -147,8 +147,8 @@ describe('checkChangelog', () => {
 
       await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(client.rest.issues.updateComment).toHaveBeenCalled();
-      expect(mockCore.info).toHaveBeenCalledWith('Updated existing warning comment');
+      expect(client.rest.issues.updateComment).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith('Skipping comment update - warning message already exists');
     });
 
     it('should create new comment when no matching comment exists', async () => {
@@ -177,16 +177,27 @@ describe('checkChangelog', () => {
     });
   });
 
-  describe('empty changelog detection', () => {
-    it('should detect multiple empty changelog entries', async () => {
-      setupExecMock(`
+  describe('detailed error handling', () => {
+    beforeEach(() => {
+      setupExecMock(`+## [v1.4.2]\n+### Added\n+- Feature`);
+      (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+### Added
+- Feature
+`);
+    });
+
+    describe('empty changelog detection', () => {
+      it('should detect multiple empty changelog entries', async () => {
+        setupExecMock(`
 +## [v1.4.2]
 +## [v1.4.1]
 +### Added
 +- Feature
 +## [v1.4.0]`);
 
-      (fs.readFileSync as jest.Mock).mockReturnValue(`
+        (fs.readFileSync as jest.Mock).mockReturnValue(`
 # Changelog
 ## [v1.4.2]
 ## [v1.4.1]
@@ -195,224 +206,204 @@ describe('checkChangelog', () => {
 ## [v1.4.0]
 `);
 
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'true');
-      expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('[v1.4.2]'));
-      expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('[v1.4.0]'));
-    });
+        expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'true');
+        expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('[v1.4.2]'));
+        expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', expect.stringContaining('[v1.4.0]'));
+      });
 
-    it('should handle non-empty changelog entries', async () => {
-      setupExecMock(`
+      it('should handle non-empty changelog entries', async () => {
+        setupExecMock(`
 +## [v1.4.2]
 +### Added
 +- New feature`);
 
-      (fs.readFileSync as jest.Mock).mockReturnValue(`
+        (fs.readFileSync as jest.Mock).mockReturnValue(`
 # Changelog
 ## [v1.4.2]
 ### Added
 - New feature
 `);
 
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'false');
-      expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', '');
+        expect(mockCore.setOutput).toHaveBeenCalledWith('has_empty_changelog', 'false');
+        expect(mockCore.setOutput).toHaveBeenCalledWith('empty_headers', '');
+      });
     });
-  });
 
-  describe('label management', () => {
-    it('should add label and warning comment for empty changelog', async () => {
-      setupExecMock(`+## [v1.4.2]`);
-      (fs.readFileSync as jest.Mock).mockReturnValue(`
+    describe('label management', () => {
+      it('should add label and warning comment for empty changelog', async () => {
+        setupExecMock(`+## [v1.4.2]`);
+        (fs.readFileSync as jest.Mock).mockReturnValue(`
 # Changelog
 ## [v1.4.2]
 `);
 
-      const client = {
-        ...baseGitHubClient,
-        rest: {
-          issues: {
-            ...baseGitHubClient.rest.issues,
-            addLabels: jest.fn().mockResolvedValue({}),
-            createComment: jest.fn().mockResolvedValue({})
+        const client = {
+          ...baseGitHubClient,
+          rest: {
+            issues: {
+              ...baseGitHubClient.rest.issues,
+              addLabels: jest.fn().mockResolvedValue({}),
+              createComment: jest.fn().mockResolvedValue({})
+            }
           }
-        }
-      };
-      mockOctokit.mockReturnValue(client as any);
+        };
+        mockOctokit.mockReturnValue(client as any);
 
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(client.rest.issues.addLabels).toHaveBeenCalledWith({
-        owner: 'babarot',
-        repo: 'test-repo',
-        issue_number: 1,
-        labels: ['empty-changelog']
+        expect(client.rest.issues.addLabels).toHaveBeenCalledWith({
+          owner: 'babarot',
+          repo: 'test-repo',
+          issue_number: 1,
+          labels: ['empty-changelog']
+        });
+        expect(client.rest.issues.createComment).toHaveBeenCalled();
       });
-      expect(client.rest.issues.createComment).toHaveBeenCalled();
-    });
 
-    it('should handle label removal errors properly', async () => {
-      setupExecMock(`+## [v1.4.2]\n+### Added\n+- Feature`);
-      (fs.readFileSync as jest.Mock).mockReturnValue(`
+      it('should handle label removal errors properly', async () => {
+        setupExecMock(`+## [v1.4.2]\n+### Added\n+- Feature`);
+        (fs.readFileSync as jest.Mock).mockReturnValue(`
 # Changelog
 ## [v1.4.2]
 ### Added
 - Feature
 `);
 
-      const client = {
-        ...baseGitHubClient,
-        rest: {
-          issues: {
-            ...baseGitHubClient.rest.issues,
-            listLabelsOnIssue: jest.fn().mockResolvedValue({
-              data: [{ name: 'empty-changelog' }]
-            }),
-            removeLabel: jest.fn().mockRejectedValue(new Error('Failed to remove label'))
+        const client = {
+          ...baseGitHubClient,
+          rest: {
+            issues: {
+              ...baseGitHubClient.rest.issues,
+              listLabelsOnIssue: jest.fn().mockResolvedValue({
+                data: [{ name: 'empty-changelog' }]
+              }),
+              removeLabel: jest.fn().mockRejectedValue(new Error('Failed to remove label'))
+            }
           }
-        }
-      };
-      mockOctokit.mockReturnValue(client as any);
+        };
+        mockOctokit.mockReturnValue(client as any);
 
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(mockCore.error).toHaveBeenCalledWith('Failed to check/remove label');
+        expect(mockCore.error).toHaveBeenCalledWith('Failed to check/remove label');
+      });
     });
-  });
 
-  describe('detailed error handling', () => {
-    beforeEach(() => {
-      setupExecMock(`+## [v1.4.2]`);
-      (fs.readFileSync as jest.Mock).mockReturnValue(`
+    describe('detailed error handling', () => {
+      beforeEach(() => {
+        setupExecMock(`+## [v1.4.2]`);
+        (fs.readFileSync as jest.Mock).mockReturnValue(`
 # Changelog
 ## [v1.4.2]
 `);
-    });
+      });
 
-    it('should handle update comment failure', async () => {
-      const client = {
-        ...baseGitHubClient,
-        rest: {
-          issues: {
-            ...baseGitHubClient.rest.issues,
-            listComments: jest.fn().mockResolvedValue({
-              data: [{ id: 1, body: defaultWarningMessage }]
-            }),
-            updateComment: jest.fn().mockRejectedValue(new Error('Update failed'))
+      it('should handle label API response debug logging', async () => {
+        const labelResponse = { data: { id: 123 } };
+        const client = {
+          ...baseGitHubClient,
+          rest: {
+            issues: {
+              ...baseGitHubClient.rest.issues,
+              addLabels: jest.fn().mockResolvedValue(labelResponse)
+            }
           }
-        }
-      };
-      mockOctokit.mockReturnValue(client as any);
+        };
+        mockOctokit.mockReturnValue(client as any);
 
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(mockCore.error).toHaveBeenCalledWith('Failed to add comment');
-      expect(mockCore.error).toHaveBeenCalledWith('Error details: Update failed');
-    });
+        expect(mockCore.debug).toHaveBeenCalledWith(`Label API Response: ${JSON.stringify(labelResponse)}`);
+      });
 
-    it('should handle label API response debug logging', async () => {
-      const labelResponse = { data: { id: 123 } };
-      const client = {
-        ...baseGitHubClient,
-        rest: {
-          issues: {
-            ...baseGitHubClient.rest.issues,
-            addLabels: jest.fn().mockResolvedValue(labelResponse)
-          }
-        }
-      };
-      mockOctokit.mockReturnValue(client as any);
-
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
-
-      expect(mockCore.debug).toHaveBeenCalledWith(`Label API Response: ${JSON.stringify(labelResponse)}`);
-    });
-
-    it('should fully handle the success comment flow', async () => {
-      setupExecMock(`+## [v1.4.2]\n+### Added\n+- Feature`);
-      (fs.readFileSync as jest.Mock).mockReturnValue(`
+      it('should fully handle the success comment flow', async () => {
+        setupExecMock(`+## [v1.4.2]\n+### Added\n+- Feature`);
+        (fs.readFileSync as jest.Mock).mockReturnValue(`
 # Changelog
 ## [v1.4.2]
 ### Added
 - Feature
 `);
 
-      const client = {
-        ...baseGitHubClient,
-        rest: {
-          issues: {
-            ...baseGitHubClient.rest.issues,
-            listLabelsOnIssue: jest.fn().mockResolvedValue({
-              data: [{ name: 'empty-changelog' }]
-            }),
-            removeLabel: jest.fn().mockResolvedValue({}),
-            createComment: jest.fn().mockResolvedValue({}),
-            listComments: jest.fn().mockResolvedValue({ data: [] })
+        const client = {
+          ...baseGitHubClient,
+          rest: {
+            issues: {
+              ...baseGitHubClient.rest.issues,
+              listLabelsOnIssue: jest.fn().mockResolvedValue({
+                data: [{ name: 'empty-changelog' }]
+              }),
+              removeLabel: jest.fn().mockResolvedValue({}),
+              createComment: jest.fn().mockResolvedValue({}),
+              listComments: jest.fn().mockResolvedValue({ data: [] })
+            }
           }
-        }
-      };
-      mockOctokit.mockReturnValue(client as any);
+        };
+        mockOctokit.mockReturnValue(client as any);
 
-      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(client.rest.issues.removeLabel).toHaveBeenCalled();
-      expect(mockCore.info).toHaveBeenCalledWith('Label removed successfully');
-      expect(mockCore.info).toHaveBeenCalledWith('Updating/creating success comment...');
-      expect(client.rest.issues.createComment).toHaveBeenCalledWith({
-        owner: 'babarot',
-        repo: 'test-repo',
-        issue_number: 1,
-        body: defaultSuccessMessage
+        expect(client.rest.issues.removeLabel).toHaveBeenCalled();
+        expect(mockCore.info).toHaveBeenCalledWith('Label removed successfully');
+        expect(mockCore.info).toHaveBeenCalledWith('Updating/creating success comment...');
+        expect(client.rest.issues.createComment).toHaveBeenCalledWith({
+          owner: 'babarot',
+          repo: 'test-repo',
+          issue_number: 1,
+          body: defaultSuccessMessage
+        });
+      });
+
+      it('should handle unknown error types properly', async () => {
+        setupExecMock('');
+        (fs.readFileSync as jest.Mock).mockImplementation(() => {
+          throw 'Unknown error'; // Throwing non-Error type
+        });
+
+        await checkChangelog({ baseSha: 'base', headSha: 'head' });
+
+        expect(mockCore.error).toHaveBeenCalledWith('Unknown error type received');
+        expect(mockCore.setFailed).toHaveBeenCalledWith('Action failed with unknown error');
       });
     });
+    it('should handle error with stack trace', async () => {
+      const error = new Error('Test error');
+      error.stack = 'Test stack trace';
 
-    it('should handle unknown error types properly', async () => {
       setupExecMock('');
       (fs.readFileSync as jest.Mock).mockImplementation(() => {
-        throw 'Unknown error'; // Throwing non-Error type
+        throw error;
       });
+
+      mockOctokit.mockReturnValue(baseGitHubClient as any);
 
       await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-      expect(mockCore.error).toHaveBeenCalledWith('Unknown error type received');
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Action failed with unknown error');
-    });
-  });
-  it('should handle error with stack trace', async () => {
-    const error = new Error('Test error');
-    error.stack = 'Test stack trace';
-
-    setupExecMock('');
-    (fs.readFileSync as jest.Mock).mockImplementation(() => {
-      throw error;
+      expect(mockCore.error).toHaveBeenCalledWith('An error occurred during changelog check');
+      expect(mockCore.error).toHaveBeenCalledWith('Error details: Test error');
+      expect(mockCore.error).toHaveBeenCalledWith('Test stack trace');
     });
 
-    mockOctokit.mockReturnValue(baseGitHubClient as any);
+    it('should handle error without stack trace', async () => {
+      const error = new Error('Test error');
+      delete error.stack;
 
-    await checkChangelog({ baseSha: 'base', headSha: 'head' });
+      setupExecMock('');
+      (fs.readFileSync as jest.Mock).mockImplementation(() => {
+        throw error;
+      });
 
-    expect(mockCore.error).toHaveBeenCalledWith('An error occurred during changelog check');
-    expect(mockCore.error).toHaveBeenCalledWith('Error details: Test error');
-    expect(mockCore.error).toHaveBeenCalledWith('Test stack trace');
-  });
+      mockOctokit.mockReturnValue(baseGitHubClient as any);
 
-  it('should handle error without stack trace', async () => {
-    const error = new Error('Test error');
-    delete error.stack;
+      await checkChangelog({ baseSha: 'base', headSha: 'head' });
 
-    setupExecMock('');
-    (fs.readFileSync as jest.Mock).mockImplementation(() => {
-      throw error;
+      expect(mockCore.error).toHaveBeenCalledWith('An error occurred during changelog check');
+      expect(mockCore.error).toHaveBeenCalledWith('Error details: Test error');
+      expect(mockCore.error).toHaveBeenCalledWith('No stack trace available');
     });
-
-    mockOctokit.mockReturnValue(baseGitHubClient as any);
-
-    await checkChangelog({ baseSha: 'base', headSha: 'head' });
-
-    expect(mockCore.error).toHaveBeenCalledWith('An error occurred during changelog check');
-    expect(mockCore.error).toHaveBeenCalledWith('Error details: Test error');
-    expect(mockCore.error).toHaveBeenCalledWith('No stack trace available');
   });
 });

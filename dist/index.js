@@ -29982,6 +29982,11 @@ async function findExistingComment(github, prNumber, warningMessage, successMess
 // Helper function to update or create comment
 async function updateOrCreateComment(github, prNumber, newMessage, warningMessage, successMessage) {
     const existingComment = await findExistingComment(github, prNumber, warningMessage, successMessage);
+    // Skip if trying to write the same warning message that already exists
+    if (newMessage === warningMessage && existingComment?.body === warningMessage) {
+        core.info('Skipping comment update - warning message already exists');
+        return;
+    }
     if (existingComment) {
         // Update existing comment
         try {
