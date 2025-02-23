@@ -41,6 +41,8 @@ A GitHub Action that checks for empty changelog entries in pull requests.
 
 ## Example
 
+### Case 1
+
 ```yaml
 name: Check Empty Changelog
 
@@ -59,8 +61,36 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pull-request-number: ${{ github.event.pull_request.number }}
+          label-name: 'empty-changelog'
           warning-message: '🚨 Please add content to the empty changelog entries'
           success-message: '✅ Thanks for updating the changelog!'
+```
+
+### Case 2: Use together with [tagpr](https://github.com/Songmu/tagpr)
+
+```yaml
+jobs:
+  tagpr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run tagpr
+        uses: Songmu/tagpr@v1.5.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        id: run-tagpr
+      - name: Check for empty changelog entries
+        if: steps.run-tagpr.outputs.pull_request != ''
+        uses: babarot/changelog-empty-check-action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          label-name: changelog-missing
+          pull-request-number: ${{ fromJSON(steps.run-tagpr.outputs.pull_request).number }}
 ```
 
 ## Development
