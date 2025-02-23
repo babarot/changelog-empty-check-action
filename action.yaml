@@ -13,14 +13,14 @@ inputs:
   pull-request-number:
     description: 'Pull request number to check'
     required: true
-  empty-message:
-    description: 'Message template for empty changelog entries (leave empty to skip comment)'
+  warning-message:
+    description: 'Custom message for empty changelog entries (leave empty to skip comment)'
     required: false
-    default: '🚨 Empty changelog entries detected'
-  filled-message:
-    description: 'Message template for filled changelog entries (leave empty to skip comment)'
+    # default: '🚨 Empty changelog entries detected'
+  success-message:
+    description: 'Custom message for filled changelog entries (leave empty to skip comment)'
     required: false
-    default: '✅ Changelog entry has been filled'
+    # default: '✅ Changelog entry has been filled'
 
 outputs:
   has_empty_changelog:
