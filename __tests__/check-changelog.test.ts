@@ -406,4 +406,109 @@ describe('checkChangelog', () => {
       expect(mockCore.error).toHaveBeenCalledWith('No stack trace available');
     });
   });
+
+  describe('pull request review handling', () => {
+    it('should request changes when empty entries are found', async () => {
+      setupExecMock(`+## [v1.4.2]`);
+      (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+      const client = {
+        ...baseGitHubClient,
+        rest: {
+          ...baseGitHubClient.rest,
+          pulls: {
+            createReview: jest.fn().mockResolvedValue({})
+          },
+          issues: {
+            ...baseGitHubClient.rest.issues,
+            addLabels: jest.fn().mockResolvedValue({}),
+            createComment: jest.fn().mockResolvedValue({})
+          }
+        }
+      };
+      mockOctokit.mockReturnValue(client as any);
+
+      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+
+      expect(client.rest.pulls.createReview).toHaveBeenCalledWith({
+        owner: 'babarot',
+        repo: 'test-repo',
+        pull_number: 1,
+        event: 'REQUEST_CHANGES',
+        body: 'Please fill the empty changelog entries.'
+      });
+    });
+
+    it('should approve when no empty entries are found', async () => {
+      setupExecMock(`+## [v1.4.2]\n+### Added\n+- Feature`);
+      (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+### Added
+- Feature
+`);
+
+      const client = {
+        ...baseGitHubClient,
+        rest: {
+          ...baseGitHubClient.rest,
+          pulls: {
+            createReview: jest.fn().mockResolvedValue({})
+          },
+          issues: {
+            ...baseGitHubClient.rest.issues,
+            listLabelsOnIssue: jest.fn().mockResolvedValue({
+              data: [{ name: 'empty-changelog' }]
+            }),
+            removeLabel: jest.fn().mockResolvedValue({}),
+            createComment: jest.fn().mockResolvedValue({}),
+            listComments: jest.fn().mockResolvedValue({ data: [] })
+          }
+        }
+      };
+      mockOctokit.mockReturnValue(client as any);
+
+      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+
+      expect(client.rest.pulls.createReview).toHaveBeenCalledWith({
+        owner: 'babarot',
+        repo: 'test-repo',
+        pull_number: 1,
+        event: 'APPROVE',
+        body: 'Changelog entries are properly filled.'
+      });
+    });
+
+    it('should handle review creation failure', async () => {
+      setupExecMock(`+## [v1.4.2]`);
+      (fs.readFileSync as jest.Mock).mockReturnValue(`
+# Changelog
+## [v1.4.2]
+`);
+
+      const client = {
+        ...baseGitHubClient,
+        rest: {
+          ...baseGitHubClient.rest,
+          pulls: {
+            createReview: jest.fn().mockRejectedValue(new Error('Review creation failed'))
+          },
+          issues: {
+            ...baseGitHubClient.rest.issues,
+            addLabels: jest.fn().mockResolvedValue({}),
+            createComment: jest.fn().mockResolvedValue({})
+          }
+        }
+      };
+      mockOctokit.mockReturnValue(client as any);
+
+      await checkChangelog({ baseSha: 'base', headSha: 'head' });
+
+      expect(mockCore.error).toHaveBeenCalledWith('Failed to create pull request review');
+    });
+  });
 });
+

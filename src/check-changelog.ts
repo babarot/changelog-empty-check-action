@@ -95,6 +95,32 @@ async function updateOrCreateComment(
   }
 }
 
+// Add new helper function for review operations
+async function handlePullRequestReview(
+  github: ReturnType<typeof getOctokit>,
+  prNumber: number,
+  isSuccess: boolean
+): Promise<void> {
+  try {
+    const reviewEvent = isSuccess ? 'APPROVE' : 'REQUEST_CHANGES';
+    const body = isSuccess
+      ? 'Changelog entries are properly filled.'
+      : 'Please fill the empty changelog entries.';
+
+    await github.rest.pulls.createReview({
+      ...context.repo,
+      pull_number: prNumber,
+      event: reviewEvent,
+      body: body
+    });
+
+    core.info(`Created ${isSuccess ? 'approval' : 'request changes'} review`);
+  } catch (error) {
+    core.error('Failed to create pull request review');
+    throw error;
+  }
+}
+
 export async function checkChangelog(options: CheckChangelogOptions): Promise<void> {
   core.info('Starting changelog check action...');
 
@@ -211,6 +237,7 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
       if (warningMessage) {
         core.info('Updating/creating warning comment...');
         await updateOrCreateComment(github, prNumber, warningMessage, warningMessage, successMessage);
+        await handlePullRequestReview(github, prNumber, false);
       }
     } else {
       // No empty entries found
@@ -241,6 +268,7 @@ export async function checkChangelog(options: CheckChangelogOptions): Promise<vo
           if (successMessage) {
             core.info('Updating/creating success comment...');
             await updateOrCreateComment(github, prNumber, successMessage, warningMessage, successMessage);
+            await handlePullRequestReview(github, prNumber, true);
           }
         }
       } catch (e) {

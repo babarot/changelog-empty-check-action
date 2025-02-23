@@ -30018,6 +30018,26 @@ async function updateOrCreateComment(github, prNumber, newMessage, warningMessag
         }
     }
 }
+// Add new helper function for review operations
+async function handlePullRequestReview(github, prNumber, isSuccess) {
+    try {
+        const reviewEvent = isSuccess ? 'APPROVE' : 'REQUEST_CHANGES';
+        const body = isSuccess
+            ? 'Changelog entries are properly filled.'
+            : 'Please fill the empty changelog entries.';
+        await github.rest.pulls.createReview({
+            ...github_1.context.repo,
+            pull_number: prNumber,
+            event: reviewEvent,
+            body: body
+        });
+        core.info(`Created ${isSuccess ? 'approval' : 'request changes'} review`);
+    }
+    catch (error) {
+        core.error('Failed to create pull request review');
+        throw error;
+    }
+}
 async function checkChangelog(options) {
     core.info('Starting changelog check action...');
     const { baseSha, headSha } = options;
@@ -30116,6 +30136,7 @@ async function checkChangelog(options) {
             if (warningMessage) {
                 core.info('Updating/creating warning comment...');
                 await updateOrCreateComment(github, prNumber, warningMessage, warningMessage, successMessage);
+                await handlePullRequestReview(github, prNumber, false);
             }
         }
         else {
@@ -30144,6 +30165,7 @@ async function checkChangelog(options) {
                     if (successMessage) {
                         core.info('Updating/creating success comment...');
                         await updateOrCreateComment(github, prNumber, successMessage, warningMessage, successMessage);
+                        await handlePullRequestReview(github, prNumber, true);
                     }
                 }
             }
